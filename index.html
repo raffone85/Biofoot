@@ -705,9 +705,76 @@ document.body.addEventListener('change',e=>{
   if(e.target.id==='histCatSel'){ ST.histCategory=e.target.value; render(); }
 });
 
-restoreDatasets();
-bindStatic();
-render();
+
+const DB_NAME='matchAnalyzerStore';
+const DB_VERSION=1;
+function openAppDb(){
+  return new Promise((resolve,reject)=>{
+    try{
+      const req=indexedDB.open(DB_NAME,DB_VERSION);
+      req.onupgradeneeded=()=>{
+        const db=req.result;
+        if(!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
+      };
+      req.onsuccess=()=>resolve(req.result);
+      req.onerror=()=>reject(req.error||new Error('IndexedDB non disponibile'));
+    }catch(err){reject(err);}
+  });
+}
+async function dbGet(key){try{const db=await openAppDb(); return await new Promise((resolve,reject)=>{const tx=db.transaction('kv','readonly'); const st=tx.objectStore('kv'); const rq=st.get(key); rq.onsuccess=()=>resolve(rq.result); rq.onerror=()=>reject(rq.error);});}catch(e){return null;}}
+async function dbSet(key,val){try{const db=await openAppDb(); return await new Promise((resolve,reject)=>{const tx=db.transaction('kv','readwrite'); const st=tx.objectStore('kv'); const rq=st.put(val,key); rq.onsuccess=()=>resolve(true); rq.onerror=()=>reject(rq.error);});}catch(e){return false;}}
+async function dbDel(key){try{const db=await openAppDb(); return await new Promise((resolve,reject)=>{const tx=db.transaction('kv','readwrite'); const st=tx.objectStore('kv'); const rq=st.delete(key); rq.onsuccess=()=>resolve(true); rq.onerror=()=>reject(rq.error);});}catch(e){return false;}}
+function datasetRawKey(key){return `dataset_raw_${key}`;}
+const _oldHandleUploadInput=handleUploadInput;
+handleUploadInput=async function(input){
+  const key=input?.dataset?.target;
+  const file=input?.files?.[0];
+  if(!key||!file) return _oldHandleUploadInput(input);
+  setUploadStatus(`Lettura file ${file.name} in corso...`);
+  try{
+    const raw=await readFileAsText(file);
+    if(!raw||!raw.trim()) throw new Error('File vuoto o non leggibile');
+    parseAndStore(key,raw);
+    await dbSet(datasetRawKey(key),{raw,name:file.name,savedAt:new Date().toISOString()});
+    const count=Array.isArray(ST[key])?ST[key].length:0;
+    if(!count) throw new Error('CSV letto ma nessuna riga valida trovata');
+    setUploadStatus(`Caricato ${file.name} in ${key}. Righe valide: ${count}. Salvataggio persistente attivo.`,'ok');
+  }catch(err){
+    console.error(err);
+    setUploadStatus(`Errore su ${file?.name||'file'} (${key}): ${err?.message||err}`,'err');
+    alert('Errore nel parsing del CSV: controlla intestazioni, separatore o compatibilità del file.');
+  }finally{input.value='';}
+};
+const _oldClearDatasetState=clearDatasetState;
+clearDatasetState=function(key){ _oldClearDatasetState(key); dbDel(datasetRawKey(key)); };
+const _oldSafeSaveStorage=safeSaveStorage;
+safeSaveStorage=function(rows){ try{_oldSafeSaveStorage(rows);}catch(e){} dbSet('history_v1',rows||[]); };
+async function restoreHistoryPersistent(){
+  const rows=await dbGet('history_v1');
+  if(Array.isArray(rows)) ST.history=rows;
+}
+const _oldRestoreDatasets=restoreDatasets;
+restoreDatasets=async function(){
+  let restored=0;
+  for(const d of DATASETS){
+    const saved=await dbGet(datasetRawKey(d.key));
+    if(saved&&saved.raw){
+      try{parseAndStore(d.key,saved.raw); restored++;}
+      catch(e){console.warn('Restore dataset fallita',d.key,e);}
+    }
+  }
+  if(!restored) _oldRestoreDatasets();
+  return restored;
+};
+async function initApp(){
+  await restoreHistoryPersistent();
+  const restored=await restoreDatasets();
+  bindStatic();
+  render();
+  if(restored&&typeof setUploadStatus==='function') setUploadStatus(`Ripristinati ${restored} dataset salvati automaticamente.`,'ok');
+}
+
+initApp();
 </script>
 </body>
 </html>
