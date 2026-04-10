@@ -456,12 +456,20 @@ function downloadPdf(){
   doc.save(`${safe}.pdf`);
 }
 
+const DATA_STORAGE_PREFIX='ma_dataset_';
+function datasetStorageKey(key){return `${DATA_STORAGE_PREFIX}${key}`;}
+function saveDatasetState(key){try{localStorage.setItem(datasetStorageKey(key),JSON.stringify(ST[key]||[]));}catch(e){console.warn('Persistenza dataset fallita',key,e);}}
+function loadDatasetState(key){try{return JSON.parse(localStorage.getItem(datasetStorageKey(key))||'[]');}catch(e){return [];}}
+function clearDatasetState(key){try{localStorage.removeItem(datasetStorageKey(key));}catch(e){}}
+function restoreDatasets(){DATASETS.forEach(d=>{const rows=loadDatasetState(d.key); if(Array.isArray(rows)&&rows.length) ST[d.key]=rows;});}
+
 function parseAndStore(key,text){
   const map={ov05:parseOv05,ggov25:parseGGOv25,mg13:parseMG13,ia:parseIA,plCards:parsePlCards,plShots:parsePlShots,quoteValore:parseQuoteValore,gz:parseGZ};
   if(!map[key])throw new Error('Dataset non gestito');
   const data=map[key](text);
   ST[key]=Array.isArray(data)?data:[];
   if(!Array.isArray(ST[key])) throw new Error('Parsing non valido');
+  saveDatasetState(key);
   if(key==='plCards'&&ST.market==='players'&&ST.plSub==='shots'&&!ST.plShots.length)ST.plSub='cards';
   if(key==='plShots'&&ST.market==='players'&&!ST.plCards.length)ST.plSub='shots';
   render();
@@ -539,7 +547,7 @@ function bindStatic(){
     const gzs=e.target.closest('[data-gzsort]');
     const open=e.target.closest('[data-open]');
     if(pick){const inp=document.getElementById(pick.dataset.pick); if(inp) inp.click(); return;}
-    if(clear){ST[clear.dataset.clear]=[]; if(clear.dataset.clear==='plCards'&&ST.plSub==='cards')ST.plSub='shots'; if(clear.dataset.clear==='plShots'&&ST.plSub==='shots')ST.plSub='cards'; setUploadStatus('Dataset resettato.'); render(); return;}
+    if(clear){clearDatasetState(clear.dataset.clear); ST[clear.dataset.clear]=[]; if(clear.dataset.clear==='plCards'&&ST.plSub==='cards')ST.plSub='shots'; if(clear.dataset.clear==='plShots'&&ST.plSub==='shots')ST.plSub='cards'; setUploadStatus('Dataset resettato.'); render(); return;}
     if(sub){ST.sub=sub.dataset.sub; render(); return;}
     if(iacat){ST.iaCat=iacat.dataset.iacat; render(); return;}
     if(plsub){ST.plSub=plsub.dataset.plsub; render(); return;}
@@ -697,6 +705,7 @@ document.body.addEventListener('change',e=>{
   if(e.target.id==='histCatSel'){ ST.histCategory=e.target.value; render(); }
 });
 
+restoreDatasets();
 bindStatic();
 render();
 </script>
